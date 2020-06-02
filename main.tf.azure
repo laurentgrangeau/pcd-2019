@@ -1,0 +1,141 @@
+provider "azurerm" {
+}
+
+resource "azurerm_resource_group" "pcd-2019-group" {
+  name     = "pcd-2019"
+  location = "northeurope"
+}
+
+resource "azurerm_virtual_network" "pcd-2019-network" {
+    name                = "pcd-2019-network"
+    address_space       = ["10.0.0.0/16"]
+    location            = "northeurope"
+    resource_group_name = "${azurerm_resource_group.pcd-2019-group.name}"
+
+    tags = {
+        environment = "pcd-2019"
+    }
+}
+
+resource "azurerm_subnet" "pcd-2019-subnet" {
+    name                 = "pcd-2019-subnet"
+    resource_group_name  = "${azurerm_resource_group.pcd-2019-group.name}"
+    virtual_network_name = "${azurerm_virtual_network.pcd-2019-network.name}"
+    address_prefix       = "10.0.2.0/24"
+}
+
+resource "azurerm_public_ip" "pcd-2019-public-ip" {
+    name                         = "pcd-2019-public-ip"
+    location                     = "northeurope"
+    resource_group_name          = "${azurerm_resource_group.pcd-2019-group.name}"
+    allocation_method            = "Dynamic"
+
+    tags = {
+        environment = "pcd-2019"
+    }
+}
+
+resource "azurerm_network_security_group" "pcd-2019-nsg" {
+    name                = "pcd-2019-nsg"
+    location            = "northeurope"
+    resource_group_name = "${azurerm_resource_group.pcd-2019-group.name}"
+    
+    security_rule {
+        name                       = "SSH"
+        priority                   = 1001
+        direction                  = "Inbound"
+        access                     = "Allow"
+        protocol                   = "Tcp"
+        source_port_range          = "*"
+        destination_port_range     = "22"
+        source_address_prefix      = "*"
+        destination_address_prefix = "*"
+    }
+
+    tags = {
+        environment = "pcd-2019"
+    }
+}
+
+resource "azurerm_network_interface" "pcd-2019-nic" {
+    name                = "pcd-2019-nic"
+    location            = "northeurope"
+    resource_group_name = "${azurerm_resource_group.pcd-2019-group.name}"
+    network_security_group_id = "${azurerm_network_security_group.pcd-2019-nsg.id}"
+
+    ip_configuration {
+        name                          = "pcd-2019-nic-config"
+        subnet_id                     = "${azurerm_subnet.pcd-2019-subnet.id}"
+        private_ip_address_allocation = "Dynamic"
+        public_ip_address_id          = "${azurerm_public_ip.pcd-2019-public-ip.id}"
+    }
+
+    tags = {
+        environment = "pcd-2019"
+    }
+}
+
+resource "azurerm_virtual_machine" "pcd-2019-vm" {
+    name                  = "pcd-2019-vm"
+    location              = "northeurope"
+    resource_group_name   = "${azurerm_resource_group.pcd-2019-group.name}"
+    network_interface_ids = ["${azurerm_network_interface.pcd-2019-nic.id}"]
+    vm_size               = "Standard_B4ms"
+
+    storage_os_disk {
+        name              = "pcd-2019-os-disk"
+        caching           = "ReadWrite"
+        create_option     = "FromImage"
+        managed_disk_type = "Standard_LRS"
+    }
+
+    storage_image_reference {
+        publisher = "Canonical"
+        offer     = "UbuntuServer"
+        sku       = "18.04-LTS"
+        version   = "latest"
+    }
+
+    os_profile {
+        computer_name  = "pcd-2019-vm"
+        admin_username = "azureuser"
+    }
+
+    os_profile_linux_config {
+        disable_password_authentication = true
+
+        ssh_keys {
+            path     = "/home/azureuser/.ssh/authorized_keys"
+            key_data = "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQDWeSBZZiWaLQkKYwxsNhvEur5HLlymF5A6cGcjEvrQzDzLHqe7/yMaenZ9jMGxJ/et8snq3KyDw7VaQvuiAHsZdES0IhDiAb82XkEn8sd7dvRqMXlnIdGpZUJ33UwOevDfn3N6JGK/6uvuJLTFcz5L/K+6pk06ur9Go1gIseCTtjmBqzpgc3bB+mD/uAfLbBXz2kJdc1RnvBk8sBxQ9UXYdwGRdEWA6RvkU1mGaOAMLhKDOxjR6rg8JQe0CTeKVFq9JdCs+KIhOiYkyZBMv8qM0s+PJpblexOoivmgPbQRjaI+qdC/b1QtQzdAPwobFbJeRFT1IrIvKA97YNBtTv8p"
+        }
+    }
+    
+    connection {
+        type = "ssh"
+        user = "azureuser"
+        private_key = "${file("/Users/laurentgrangeau/.ssh/id_rsa")}"
+        host = "${azurerm_public_ip.pcd-2019-public-ip.ip_address}"
+    }
+    
+    provisioner "remote-exec" {
+        inline = [
+            "sudo apt -y update && sudo apt -y full-upgrade",
+            "curl -L https://github.com/etcd-io/etcd/releases/download/v3.3.10/etcd-v3.3.10-linux-amd64.tar.gz | tar --strip-components=1 --wildcards -zx '*/etcd' '*/etcdctl'",
+            "curl -L https://dl.k8s.io/v1.13.0/kubernetes-server-linux-amd64.tar.gz | tar --strip-components=3 -zx kubernetes/server/bin/hyperkube",
+            "curl -L https://download.docker.com/linux/static/stable/x86_64/docker-18.09.0.tgz | tar --strip-components=1 -zx"
+        ]
+    }
+
+    tags = {
+        environment = "pcd-2019"
+    }
+}
+
+data "azurerm_public_ip" "pcd-2019-public-ip" {
+  name                = "${azurerm_public_ip.pcd-2019-public-ip.name}"
+  resource_group_name = "${azurerm_virtual_machine.pcd-2019-vm.resource_group_name}"
+}
+
+output "public_ip_address" {
+  value = "${data.azurerm_public_ip.pcd-2019-public-ip.ip_address}"
+}

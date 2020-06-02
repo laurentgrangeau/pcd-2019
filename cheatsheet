@@ -1,0 +1,77 @@
+## Part 1
+### Start etcd
+etcd
+### Start the API server
+sudo kube-apiserver --etcd-servers http://localhost:2379
+### Verify the api server
+kubectl get all
+kubectl get nodes
+kubectl get componentstatuses
+### Maybe we can create a deployment ?
+kubectl create deployment web --image=nginx
+### Verify pods
+kubectl get all
+### Wait ? Why is there no pods ? Let's start the controller manager
+kube-controller-manager --master http://localhost:8080
+### Verify the events
+kubectl get events
+### There is an error with a service account. Let's add an option
+sudo kube-apiserver --etcd-servers http://localhost:2379 --disable-admission-plugins=ServiceAccount
+### Is this better ?
+kubectl get all
+### No... There is no scheduler and no nodes ! Let's start dockerd
+./scripts/31-download-prerequisites-worker.sh
+sudo dockerd
+### Verify it works
+sudo docker run alpine echo HelloSunnyTech
+### Now, let's add a node. But wait, it's a bit complicated. Let's start with generate a kubeconfig
+kubectl --kubeconfig kubeconfig.kubelet config set-cluster localhost --server http://localhost:8080
+kubectl --kubeconfig kubeconfig.kubelet config set-context localhost --cluster localhost
+kubectl --kubeconfig kubeconfig.kubelet config use-context localhost
+### And now we can start kubelet
+sudo kubelet --kubeconfig kubeconfig.kubelet
+### Do we have a node ?
+kubectl get nodes
+### And our pod ?
+kubectl get pods
+### Crap... Oh wait... We don't have a scheduler yet
+kube-scheduler --master http://localhost:8080
+### Now our pod should run
+kubectl get all
+### Let's connect to it
+kubectl get pods -o wide
+curl $IP
+### Now let's expose it via a service
+kubectl expose deployment web --port=80
+kubectl get svc web
+curl $IP
+### Timeout ? Oh wait, the proxy !!
+sudo kube-proxy --master http://localhost:8080
+### Let's curl it
+curl $IP
+### Let's see what it did with iptables
+sudo iptables -t nat -L OUTPUT
+sudo iptables -t nat -L KUBE-SERVICES
+sudo iptables -t nat -L KUBE-SVC-XXX
+### SEP stands for ServiceEndPoint
+sudo iptables -t nat -L KUBE-SEP-YYY
+### Scale the service now
+kubectl scale deployment web --replicas=4
+### And see what iptables did
+sudo iptables -t nat -L KUBE-SVC-XXX
+
+## Part 2
+### Start the etcd cluster
+./14-start-etcd.sh
+### Verify the cluster
+sudo ETCDCTL_API=3 etcdctl member list --endpoints=https://127.0.0.1:2379 --cacert=/etc/etcd/ca.pem --cert=/etc/etcd/kubernetes.pem --key=/etc/etcd/kubernetes-key.pem
+### Start the control plane
+./15-start-control-plane.sh
+### Verify the control plane
+kubectl get componentstatuses
+### Start the workers
+./16-start-workers.sh
+### Verify the workers
+kubectl get nodes
+### Deploy CoreDNS
+./17-install-coredns.sh
